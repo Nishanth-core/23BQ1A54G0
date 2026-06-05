@@ -1030,3 +1030,249 @@ WHERE id = $1
 # Summary
 This Stage 2 section adds a production-ready persistence plan using PostgreSQL, provides schema and indexes, addresses scaling and retention, and maps each REST endpoint to concrete SQL queries. These SQL snippets can be used directly in the server implementation or adapted for an ORM.
 
+---
+
+## Stage 4
+
+# Performance Optimization Strategy for Notification Retrieval
+
+## Problem Statement
+Currently, notifications are fetched from the database every time a student loads a page.
+
+Current Flow:
+
+```
+Student Opens Page
+        |
+        v
+API Request
+        |
+        v
+Database Query
+        |
+        v
+Return Notifications
+```
+
+With:
+
+- 50,000 students
+- 5,000,000 notifications
+- Multiple page loads per user session
+
+the database receives a very large number of repetitive read requests.
+
+Example:
+
+```
+50,000 students
+× 10 page loads/day
+= 500,000 notification queries/day
+```
+
+Most of these requests return the same data because notifications typically do not change between page loads.
+
+This causes:
+
+- Increased database CPU utilization
+- High disk I/O
+- Increased response latency
+- Poor user experience
+- Reduced scalability
+
+---
+
+# Recommended Solution
+A single optimization is usually insufficient.
+
+Instead, a combination of strategies should be applied.
+
+---
+
+# Strategy 1: Redis Cache
+
+## Approach
+Store frequently accessed notification data in Redis.
+
+Architecture:
+
+```
+Client
+   |
+Notification API
+   |
+Redis Cache
+   |
+PostgreSQL
+```
+
+Request Flow:
+
+```
+User Request
+      |
+      v
+Check Redis
+      |
+      |---- Cache Hit ----> Return Data
+      |
+      |---- Cache Miss ---> Query DB
+                             |
+                             v
+                      Store in Redis
+                             |
+                             v
+                       Return Data
+```
+
+---
+
+## Example Cache Key
+
+```
+notifications:user:1042
+```
+
+Unread count:
+
+```
+unread_count:user:1042
+```
+
+---
+
+## Benefits
+
+### Reduced Database Load
+Many requests never reach PostgreSQL.
+
+### Faster Response Time
+Redis operates in memory.
+
+### Better Scalability
+The API can service more users and more page loads without linear database costs.
+
+---
+
+# Strategy 2: Cache Invalidation and Refresh
+
+## Cache Invalidation Rules
+
+- When a notification is created, invalidate or update `notifications:user:<id>` and `unread_count:user:<id>`.
+- When a notification is marked read, update both the cached list and unread count.
+- When a notification is deleted, remove it from cache and decrement the unread count if needed.
+
+## Refresh Policies
+
+- Use a short TTL for list cache entries (for example, 30 seconds to 2 minutes) to keep data fresh.
+- Use event-driven invalidation for writes, and TTL fallback for stale or missing cache entries.
+
+---
+
+# Strategy 3: Read-Through Cache for Hot Data
+
+## Use Cases
+
+- Recent unread notifications
+- Unread badge count
+- Frequently viewed notification pages
+
+## Example Flow
+
+1. API checks `notifications:user:<id>`.
+2. If missing, query PostgreSQL.
+3. Store the response in Redis with a TTL.
+4. Return the cached response.
+
+---
+
+# Strategy 4: Partial and Precomputed Cache
+
+## Unread Count Cache
+
+Cache the unread notification count separately:
+
+```
+unread_count:user:1042
+```
+
+This allows the UI badge to be served quickly without full list retrieval.
+
+## Recent Notifications Cache
+
+Cache the latest `N` notifications for each user, such as the newest 20 records.
+
+Benefits:
+
+- Optimized list retrieval
+- Reduced network payload
+- Fast initial page render
+
+---
+
+# Strategy 5: Pagination and Filtered Reads
+
+## Why It Matters
+
+Even with caching, large result sets should not be returned in a single request.
+
+## Recommended Practices
+
+- Always use `LIMIT` and `OFFSET` or cursor-based pagination.
+- Filter by `isRead` when the client requests unread or read notifications explicitly.
+- Return a small page of notifications and request more only when needed.
+
+---
+
+# Strategy 6: Read Replica or Materialized View for Analytics
+
+## When to Use It
+
+If the system must support heavy analytics or historical queries, consider:
+
+- A read replica for reporting traffic
+- A materialized view for aggregated notification counts
+
+This keeps transactional query performance isolated from analytical workloads.
+
+---
+
+# Practical Guidance
+
+## 1. Add Redis to the System
+
+- Use Redis for caching notification lists and counts.
+- Namespace cache keys by user and data type.
+- Use short TTLs and write-time invalidation.
+
+## 2. Keep PostgreSQL as Source of Truth
+
+- Use Redis as a performance layer only.
+- Always refresh stale data from PostgreSQL when the cache misses.
+
+## 3. Monitor Cache Hit Ratio
+
+- Track hits versus misses.
+- Tune TTLs and invalidation rules based on real traffic.
+
+## 4. Use Composite Indexes for Reads
+
+Continue using the Stage 3 index:
+
+```
+CREATE INDEX idx_notifications_student_read_created
+ON notifications(studentID, isRead, createdAt DESC);
+```
+
+This ensures cache misses remain efficient.
+
+---
+
+# Summary
+
+For notification retrieval, combine Redis caching with smart invalidation, precomputed counts, and read-optimized database indexes.
+
+This approach reduces repetitive DB reads, accelerates page loads, and improves scalability for large student and notification volumes.
+
+This Stage 4 section demonstrates system design reasoning and practical backend optimization techniques across caching, invalidation, and query performance.
+
