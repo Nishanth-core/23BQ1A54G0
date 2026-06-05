@@ -4,16 +4,17 @@ const db = require('../db');
 
 router.post('/', async (req, res) => {
   const { userId, title, message, type } = req.body;
-  if (!userId || !title || !message || !type) {
+  const ownerId = userId || (req.user && req.user.id);
+  if (!ownerId || !title || !message || !type) {
     return res.status(400).json({
       success: false,
-      error: { code: 'VALIDATION_ERROR', message: 'userId, title, message and type are required' },
+      error: { code: 'VALIDATION_ERROR', message: 'userId (or authenticated user), title, message and type are required' },
     });
   }
 
   try {
     const insert = `INSERT INTO notifications (user_id, title, message, type) VALUES ($1, $2, $3, $4) RETURNING id, user_id AS "userId", title, message, type, is_read AS "isRead", created_at AS "createdAt"`;
-    const { rows } = await db.query(insert, [userId, title, message, type]);
+    const { rows } = await db.query(insert, [ownerId, title, message, type]);
     return res.status(201).json({ success: true, data: rows[0] });
   } catch (err) {
     console.error(err);

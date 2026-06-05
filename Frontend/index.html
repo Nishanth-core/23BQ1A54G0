@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notification System</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header>
+      <h1>Notification System</h1>
+    </header>
+
+    <section class="panel" id="login-panel">
+      <h2>Login</h2>
+      <label for="email">Email</label>
+      <input id="email" type="email" placeholder="user@example.com" />
+      <button id="login-button">Login</button>
+      <p class="hint">This will create a user and return a Bearer token.</p>
+    </section>
+
+    <section class="panel" id="token-panel" hidden>
+      <h2>Authenticated</h2>
+      <pre id="token-display"></pre>
+      <button id="logout-button">Logout</button>
+    </section>
+
+    <section class="panel" id="notification-panel" hidden>
+      <h2>Notifications</h2>
+      <div class="controls">
+        <button id="refresh-button">Refresh</button>
+        <button id="mark-all-button">Mark All As Read</button>
+      </div>
+      <div class="filters">
+        <label>
+          Show
+          <select id="read-filter">
+            <option value="all">All</option>
+            <option value="false">Unread</option>
+            <option value="true">Read</option>
+          </select>
+        </label>
+      </div>
+      <ul id="notifications-list"></ul>
+      <div class="create-form">
+        <h3>Create Notification</h3>
+        <input id="title" placeholder="Title" />
+        <textarea id="message" placeholder="Message"></textarea>
+        <select id="type">
+          <option value="info">Info</option>
+          <option value="success">Success</option>
+          <option value="warning">Warning</option>
+          <option value="error">Error</option>
+        </select>
+        <button id="create-button">Create Notification</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
