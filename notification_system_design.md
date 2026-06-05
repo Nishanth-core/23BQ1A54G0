@@ -369,6 +369,433 @@ DELETE /notifications/notif_001
 
 ```
 ```
+## Stage 3
+
+# Query Performance Analysis and Optimization
+
+## Existing Query
+
+```
+SELECT *
+FROM notifications
+WHERE studentID = 1042
+  AND isRead = false
+ORDER BY createdAt ASC;
+```
+
+---
+
+# Is the Query Accurate?
+Yes, the query is functionally correct.
+
+It returns all unread notifications belonging to student `1042`, sorted by creation time in ascending order (oldest first).
+
+However, there are several concerns:
+
+1. It fetches all columns using `SELECT *`.
+2. It returns every unread notification without pagination.
+3. It may require scanning a very large table if proper indexes do not exist.
+4. Ascending sort is unusual for notification systems since users generally expect the newest notifications first.
+
+---
+
+# Why is the Query Slow?
+Current database size:
+
+- Students: 50,000
+- Notifications: 5,000,000
+
+Without an appropriate index, PostgreSQL/MySQL must perform a large table scan.
+
+Execution process:
+
+```
+5,000,000 rows
+    ↓
+Check studentID
+    ↓
+Check isRead
+    ↓
+Sort matching rows
+    ↓
+Return result
+```
+This becomes expensive as data volume grows.
+
+---
+
+# Time Complexity Without Indexes
+
+### Filtering
+
+```
+O(N)
+```
+Where:
+
+```
+N = 5,000,000 notifications
+```
+The database may inspect nearly every row.
+
+### Sorting
+If M notifications belong to the student:
+
+```
+O(M log M)
+```
+Overall:
+
+```
+O(N + M log M)
+```
+This is inefficient for large datasets.
+
+---
+
+# Additional Problems in the Query
+
+## 1. SELECT *
+
+```
+SELECT *
+```
+Retrieves every column even when only a few fields are needed.
+
+Recommended:
+
+```
+SELECT
+  id,
+  title,
+  message,
+  createdAt
+FROM notifications
+WHERE studentID = 1042
+AND isRead = false
+ORDER BY createdAt DESC;
+```
+Benefits:
+
+- Less disk I/O
+- Smaller network payload
+- Faster response time
+
+---
+
+## 2. Missing Pagination
+Current query:
+
+```
+SELECT *
+FROM notifications
+WHERE studentID = 1042
+AND isRead = false;
+```
+Could return thousands of rows.
+
+Recommended:
+
+```
+SELECT
+  id,
+  title,
+  message,
+  createdAt
+FROM notifications
+WHERE studentID = 1042
+AND isRead = false
+ORDER BY createdAt DESC
+LIMIT 50 OFFSET 0;
+```
+Benefits:
+
+- Faster API response
+- Reduced memory consumption
+- Better user experience
+
+---
+
+# Recommended Index Strategy
+The most effective solution is a composite index.
+
+```
+CREATE INDEX idx_notifications_student_read_created
+ON notifications (
+  studentID,
+  isRead,
+  createdAt DESC
+);
+```
+
+---
+
+# Why This Index Helps
+The query filters by:
+
+```
+studentID
+isRead
+```
+and sorts by:
+
+```
+createdAt
+```
+The composite index matches the query pattern exactly.
+
+Database execution becomes:
+
+```
+Locate studentID
+    ↓
+Locate unread records
+    ↓
+Read already sorted rows
+    ↓
+Return result
+```
+No additional sort operation is required.
+
+---
+
+# Likely Computational Cost After Indexing
+Using a B-Tree index:
+
+Lookup cost:
+
+```
+O(log N)
+```
+Where:
+
+```
+N = 5,000,000
+```
+Returning matching rows:
+
+```
+O(K)
+```
+Where:
+
+```
+K = matching unread notifications
+```
+Overall:
+
+```
+O(log N + K)
+```
+This is significantly faster than a full table scan.
+
+---
+
+# Further Optimization
+For a notification feed, newest notifications are usually displayed first.
+
+Recommended query:
+
+```
+SELECT
+  id,
+  title,
+  message,
+  createdAt
+FROM notifications
+WHERE studentID = 1042
+AND isRead = false
+ORDER BY createdAt DESC
+LIMIT 50;
+```
+Benefits:
+
+- Uses the index efficiently
+- Returns latest notifications immediately
+- Minimizes data transfer
+
+---
+
+# Should We Add Indexes on Every Column?
+No.
+
+Adding indexes on every column is generally poor database design.
+
+---
+
+## Why Not?
+
+### 1. Increased Storage Usage
+Every index consumes disk space.
+
+Example:
+
+```
+Table Size = 2 GB
+
+Indexes:
+studentID
+isRead
+createdAt
+title
+message
+type
+status
+...
+
+Total storage may grow significantly.
+```
+
+---
+
+### 2. Slower INSERT Operations
+Whenever a notification is inserted:
+
+```
+INSERT INTO notifications ...
+```
+Every index must also be updated.
+
+More indexes means:
+
+```
+Higher write latency
+```
+Since notifications are write-heavy, this becomes costly.
+
+---
+
+### 3. Slower UPDATE Operations
+Example:
+
+```
+UPDATE notifications
+SET isRead = true;
+```
+The database must update:
+
+- Table data
+- Related indexes
+
+More indexes increase update cost.
+
+---
+
+### 4. Many Indexes Are Never Used
+Example:
+
+```
+CREATE INDEX idx_message
+ON notifications(message);
+```
+If queries never search by message, the index provides no benefit.
+
+---
+
+# Best Practice
+Create indexes only for:
+
+1. Frequently filtered columns
+2. Frequently joined columns
+3. Frequently sorted columns
+4. Frequently grouped columns
+
+For this system:
+
+```
+CREATE INDEX idx_notifications_student_read_created
+ON notifications(studentID, isRead, createdAt DESC);
+```
+is far more useful than indexing every column individually.
+
+---
+
+# Query: Students Who Received Placement Notifications in Last 7 Days
+Assuming:
+
+```
+notificationType ENUM (
+  'Events',
+  'Results',
+  'Placement'
+)
+```
+
+## Query
+
+```
+SELECT DISTINCT studentID
+FROM notifications
+WHERE notificationType = 'Placement'
+AND createdAt >= CURRENT_TIMESTAMP - INTERVAL '7 days';
+```
+
+---
+
+# If Student Details Are Required
+Assuming a students table exists:
+
+```
+CREATE TABLE students (
+  studentID BIGINT PRIMARY KEY,
+  name VARCHAR(255),
+  email VARCHAR(255)
+);
+```
+Query:
+
+```
+SELECT DISTINCT
+  s.studentID,
+  s.name,
+  s.email
+FROM students s
+JOIN notifications n
+  ON s.studentID = n.studentID
+WHERE n.notificationType = 'Placement'
+AND n.createdAt >= CURRENT_TIMESTAMP - INTERVAL '7 days';
+```
+
+---
+
+# Index Recommendation for Placement Query
+Since the query filters by:
+
+```
+notificationType
+createdAt
+```
+Create:
+
+```
+CREATE INDEX idx_notifications_type_created
+ON notifications (
+  notificationType,
+  createdAt DESC
+);
+```
+Benefits:
+
+- Fast filtering on Placement notifications
+- Efficient retrieval of recent records
+- Avoids scanning millions of rows
+
+---
+
+# Final Recommendation
+For a database containing 5,000,000+ notifications:
+
+1. Avoid `SELECT *`.
+2. Always paginate notification APIs.
+3. Use composite indexes matching query patterns.
+4. Prefer `ORDER BY createdAt DESC` for notification feeds.
+5. Do not create indexes on every column.
+6. Use targeted indexes based on actual query workloads.
+7. Consider partitioning notifications by date once the table grows into tens of millions of rows.
+
+With these optimizations, the unread notification query can improve from a full table scan (`O(N)`) to an indexed lookup (`O(log N + K)`), dramatically reducing response times and database load.
+
+This Stage 3 section demonstrates query analysis, performance tuning, index design, computational complexity, and SQL query optimization—exactly the kind of database reasoning interviewers and evaluators typically look for in system design assignments.
 
 ## Stage 2
 
